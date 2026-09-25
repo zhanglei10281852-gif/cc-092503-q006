@@ -9,6 +9,7 @@ from typing import Any
 from app.core.clock import Clock, SystemClock, to_storage
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.security import Principal
+from app.samples.ledger import ConsumptionLedgerService
 from app.samples.repository import ApprovalRepository, LocationRepository, SampleRepository
 from app.services.audit import AuditService
 
@@ -141,6 +142,12 @@ class DestructionService:
         if existing:
             return {"record": dict(existing), "sample": self.samples.get(approval["resource_id"]), "replayed": True}
         sample = self.samples.get(approval["resource_id"])
+        # 销毁规则：执行销毁（无论全部或部分）时，该样品全部未确认预约立即失效并释放冻结量
+        expired = ConsumptionLedgerService(self.connection, self.clock).expire_active_for_sample(
+            principal, sample["id"], "sample_destroyed"
+        )
+        if expired:
+            sample = self.samples.get(approval["resource_id"])
         quantity = float(approval["payload"].get("quantity", sample["quantity"]))
         if quantity <= 0 or quantity > sample["quantity"] - sample["reserved_quantity"]:
             raise ConflictError("审批数量超过当前可销毁数量")
@@ -190,7 +197,11 @@ class DestructionService:
             quantity_delta=-quantity,
             from_state=sample["lifecycle_state"],
             to_state=target_state,
-            details={"request_id": request_id, "certificate_digest": certificate},
+            details={
+                "request_id": request_id,
+                "certificate_digest": certificate,
+                "expired_reservation_codes": [item["reservation_code"] for item in expired],
+            },
         )
         self.audit.record(
             principal,
@@ -199,7 +210,11 @@ class DestructionService:
             str(sample["id"]),
             before=sample,
             after=updated,
-            metadata={"request_id": request_id, "certificate_digest": certificate},
+            metadata={
+                "request_id": request_id,
+                "certificate_digest": certificate,
+                "expired_reservation_count": len(expired),
+            },
         )
         return {"record": record, "sample": updated, "replayed": False}
 

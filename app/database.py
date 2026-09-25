@@ -335,6 +335,50 @@ CREATE TABLE IF NOT EXISTS sample_events (
     occurred_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sample_events_sample ON sample_events(sample_id, id);
+
+CREATE TABLE IF NOT EXISTS consumption_reservations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reservation_code TEXT NOT NULL UNIQUE,
+    sample_id INTEGER NOT NULL REFERENCES samples(id),
+    experiment_code TEXT NOT NULL,
+    quantity REAL NOT NULL CHECK(quantity > 0),
+    state TEXT NOT NULL CHECK(state IN ('active','confirmed','released','expired')),
+    idempotency_key TEXT NOT NULL,
+    confirm_idempotency_key TEXT,
+    release_idempotency_key TEXT,
+    confirmed_quantity REAL,
+    expiry_reason TEXT,
+    operator_user_id INTEGER NOT NULL REFERENCES users(id),
+    note TEXT NOT NULL DEFAULT '',
+    settled_at TEXT,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(sample_id, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_reservations_sample ON consumption_reservations(sample_id, state);
+CREATE INDEX IF NOT EXISTS idx_reservations_experiment ON consumption_reservations(experiment_code);
+
+CREATE TABLE IF NOT EXISTS consumption_ledger_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_code TEXT NOT NULL UNIQUE,
+    reservation_id INTEGER REFERENCES consumption_reservations(id),
+    sample_id INTEGER NOT NULL REFERENCES samples(id),
+    experiment_code TEXT NOT NULL,
+    entry_type TEXT NOT NULL CHECK(entry_type IN ('reserve','confirm','release','expire','correction_reversal','correction_reentry')),
+    quantity_delta REAL NOT NULL DEFAULT 0,
+    reserved_delta REAL NOT NULL DEFAULT 0,
+    reverses_entry_id INTEGER REFERENCES consumption_ledger_entries(id),
+    idempotency_key TEXT,
+    operator_user_id INTEGER NOT NULL REFERENCES users(id),
+    note TEXT NOT NULL DEFAULT '',
+    occurred_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_sample ON consumption_ledger_entries(sample_id, id);
+CREATE INDEX IF NOT EXISTS idx_ledger_experiment ON consumption_ledger_entries(experiment_code);
+CREATE INDEX IF NOT EXISTS idx_ledger_reservation ON consumption_ledger_entries(reservation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ledger_reversal ON consumption_ledger_entries(reverses_entry_id) WHERE entry_type='correction_reversal';
 """
 
 PERMISSIONS = [

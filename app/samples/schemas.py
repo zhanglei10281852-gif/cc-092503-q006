@@ -52,6 +52,34 @@ class ConsumptionCreate(BaseModel):
     note: str = Field(default="", max_length=500)
 
 
+class ReservationCreate(BaseModel):
+    experiment_code: str = Field(min_length=2, max_length=100)
+    quantity: float = Field(gt=0)
+    idempotency_key: str = Field(min_length=4, max_length=100)
+    note: str = Field(default="", max_length=500)
+
+
+class ReservationConfirm(BaseModel):
+    actual_quantity: float = Field(ge=0)
+    idempotency_key: str = Field(min_length=4, max_length=100)
+    note: str = Field(default="", max_length=500)
+
+
+class ReservationRelease(BaseModel):
+    idempotency_key: str = Field(min_length=4, max_length=100)
+    reason: str = Field(default="", max_length=500)
+
+
+class LedgerCorrection(BaseModel):
+    corrected_quantity: float = Field(ge=0)
+    idempotency_key: str = Field(min_length=4, max_length=100)
+    reason: str = Field(min_length=2, max_length=500)
+
+
+class QuarantineRequest(BaseModel):
+    reason: str = Field(min_length=2, max_length=500)
+
+
 class LoanCreate(BaseModel):
     loan_code: str | None = Field(default=None, max_length=64)
     sample_id: int = Field(gt=0)

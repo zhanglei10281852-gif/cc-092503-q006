@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query, status
 from app.api.dependencies import current_principal
 from app.database import get_connection, transaction
 from app.core.security import Principal
+from app.samples.ledger import ConsumptionLedgerService
 from app.samples.schemas import (
     AliquotRequest,
     AnomalyCreate,
@@ -12,9 +13,14 @@ from app.samples.schemas import (
     ApprovalDecision,
     BatchCreate,
     ConsumptionCreate,
+    LedgerCorrection,
     LoanCreate,
     LoanReturn,
     LocationCreate,
+    QuarantineRequest,
+    ReservationConfirm,
+    ReservationCreate,
+    ReservationRelease,
     SampleCreate,
 )
 from app.samples.service import AnomalyService, ApprovalService, LoanService, LocationService, SampleLifecycleService
@@ -54,9 +60,69 @@ def list_samples(
     return SampleLifecycleService(get_connection()).list_samples(principal, lifecycle_state, batch_id)
 
 
+# 注意：/ledger-entries 必须声明在 /{sample_id} 之前，否则会被路径参数吞掉
+@router.get("/ledger-entries")
+def ledger_entries_by_experiment(
+    experiment_code: str = Query(min_length=2, max_length=100),
+    principal: Principal = Depends(current_principal),
+):
+    return ConsumptionLedgerService(get_connection()).experiment_ledger(principal, experiment_code)
+
+
+@router.get("/reservations/{reservation_id}")
+def get_reservation(reservation_id: int, principal: Principal = Depends(current_principal)):
+    return ConsumptionLedgerService(get_connection()).reservation_detail(principal, reservation_id)
+
+
+@router.post("/reservations/{reservation_id}/confirm")
+def confirm_reservation(reservation_id: int, payload: ReservationConfirm, principal: Principal = Depends(current_principal)):
+    with transaction(immediate=True) as connection:
+        return ConsumptionLedgerService(connection).confirm(principal, reservation_id, payload.model_dump())
+
+
+@router.post("/reservations/{reservation_id}/release")
+def release_reservation(reservation_id: int, payload: ReservationRelease, principal: Principal = Depends(current_principal)):
+    with transaction(immediate=True) as connection:
+        return ConsumptionLedgerService(connection).release(principal, reservation_id, payload.model_dump())
+
+
+@router.post("/ledger-entries/{entry_id}/corrections", status_code=status.HTTP_201_CREATED)
+def correct_ledger_entry(entry_id: int, payload: LedgerCorrection, principal: Principal = Depends(current_principal)):
+    with transaction(immediate=True) as connection:
+        return ConsumptionLedgerService(connection).correct(principal, entry_id, payload.model_dump())
+
+
 @router.get("/{sample_id}")
 def get_sample(sample_id: int, principal: Principal = Depends(current_principal)):
     return SampleLifecycleService(get_connection()).detail(principal, sample_id)
+
+
+@router.post("/{sample_id}/reservations", status_code=status.HTTP_201_CREATED)
+def create_reservation(sample_id: int, payload: ReservationCreate, principal: Principal = Depends(current_principal)):
+    with transaction(immediate=True) as connection:
+        return ConsumptionLedgerService(connection).reserve(principal, sample_id, payload.model_dump())
+
+
+@router.get("/{sample_id}/reservations")
+def list_reservations(sample_id: int, principal: Principal = Depends(current_principal)):
+    return ConsumptionLedgerService(get_connection()).list_reservations(principal, sample_id)
+
+
+@router.get("/{sample_id}/ledger")
+def sample_ledger(sample_id: int, principal: Principal = Depends(current_principal)):
+    return ConsumptionLedgerService(get_connection()).sample_ledger(principal, sample_id)
+
+
+@router.post("/{sample_id}/quarantine")
+def quarantine_sample(sample_id: int, payload: QuarantineRequest, principal: Principal = Depends(current_principal)):
+    with transaction(immediate=True) as connection:
+        return SampleLifecycleService(connection).quarantine(principal, sample_id, payload.model_dump())
+
+
+@router.post("/{sample_id}/quarantine/lift")
+def lift_quarantine(sample_id: int, payload: QuarantineRequest, principal: Principal = Depends(current_principal)):
+    with transaction(immediate=True) as connection:
+        return SampleLifecycleService(connection).lift_quarantine(principal, sample_id, payload.model_dump())
 
 
 @router.post("/{sample_id}/aliquots", status_code=status.HTTP_201_CREATED)

@@ -10,6 +10,7 @@ from typing import Any
 from app.core.clock import Clock, SystemClock, to_storage
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.security import Principal
+from app.samples.ledger import ConsumptionLedgerService
 from app.samples.repository import AnomalyRepository, ApprovalRepository, BatchRepository, LocationRepository, SampleRepository
 from app.services.audit import AuditService
 
@@ -170,6 +171,62 @@ class SampleLifecycleService:
         self.samples.append_event(sample_id, "consumed", principal.user_id, now, quantity_delta=-data["quantity"], from_state=sample["lifecycle_state"], to_state=new_state, details={"experiment_code": data["experiment_code"]})
         self.audit.record(principal, "sample.consume", "sample", str(sample_id), before=sample, after=updated)
         return {"record": record, "sample": updated, "replayed": False}
+
+    def quarantine(self, principal: Principal, sample_id: int, data: dict[str, Any]) -> dict[str, Any]:
+        principal.require("samples.write")
+        sample = self.samples.get(sample_id)
+        if sample["lifecycle_state"] == "quarantined":
+            return {"sample": sample, "expired_reservations": [], "replayed": True}
+        if sample["lifecycle_state"] in {"destroyed", "pending_destruction", "consumed", "loaned"}:
+            raise ConflictError("当前状态禁止隔离")
+        now = to_storage(self.clock.now())
+        expired = ConsumptionLedgerService(self.connection, self.clock).expire_active_for_sample(
+            principal, sample_id, "sample_quarantined", now
+        )
+        current = self.samples.get(sample_id)
+        updated = self.samples.set_state(sample_id, "quarantined", current["version"], now)
+        self.samples.append_event(
+            sample_id,
+            "quarantined",
+            principal.user_id,
+            now,
+            from_state=sample["lifecycle_state"],
+            to_state="quarantined",
+            details={
+                "reason": data["reason"],
+                "expired_reservation_codes": [item["reservation_code"] for item in expired],
+            },
+        )
+        self.audit.record(
+            principal,
+            "sample.quarantine",
+            "sample",
+            str(sample_id),
+            before=sample,
+            after=updated,
+            metadata={"reason": data["reason"], "expired_reservation_count": len(expired)},
+        )
+        return {"sample": updated, "expired_reservations": expired, "replayed": False}
+
+    def lift_quarantine(self, principal: Principal, sample_id: int, data: dict[str, Any]) -> dict[str, Any]:
+        principal.require("samples.write")
+        sample = self.samples.get(sample_id)
+        if sample["lifecycle_state"] != "quarantined":
+            raise ConflictError("样品未处于隔离状态")
+        now = to_storage(self.clock.now())
+        target_state = "available" if sample["quantity"] > 0 else "consumed"
+        updated = self.samples.set_state(sample_id, target_state, sample["version"], now)
+        self.samples.append_event(
+            sample_id,
+            "quarantine.lifted",
+            principal.user_id,
+            now,
+            from_state="quarantined",
+            to_state=target_state,
+            details={"reason": data["reason"]},
+        )
+        self.audit.record(principal, "sample.quarantine_lift", "sample", str(sample_id), before=sample, after=updated)
+        return {"sample": updated, "replayed": False}
 
 
 class LoanService:
