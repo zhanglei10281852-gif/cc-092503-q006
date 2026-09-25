@@ -167,6 +167,15 @@ class SampleLifecycleService:
             (sample_id, data["experiment_code"], data["quantity"], principal.user_id, data["idempotency_key"], now, data.get("note", ""), now),
         )
         record = dict(self.connection.execute("SELECT * FROM consumption_records WHERE id=?", (cursor.lastrowid,)).fetchone())
+        # 直接消耗同样入消耗账本（无预约），保证每次库存变化都能按实验编号对账。
+        self.connection.execute(
+            """INSERT INTO consumption_ledger_entries(
+                   sample_id,reservation_id,experiment_code,entry_type,operation,quantity,
+                   on_hand_delta,frozen_delta,actor_user_id,idempotency_key,note,occurred_at,created_at
+               ) VALUES(?,?,?, 'consume','direct', ?,?,0,?,?,?,?,?)""",
+            (sample_id, None, data["experiment_code"], data["quantity"], -data["quantity"],
+             principal.user_id, data["idempotency_key"], data.get("note", ""), now, now),
+        )
         self.samples.append_event(sample_id, "consumed", principal.user_id, now, quantity_delta=-data["quantity"], from_state=sample["lifecycle_state"], to_state=new_state, details={"experiment_code": data["experiment_code"]})
         self.audit.record(principal, "sample.consume", "sample", str(sample_id), before=sample, after=updated)
         return {"record": record, "sample": updated, "replayed": False}

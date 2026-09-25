@@ -10,6 +10,7 @@
 - 分装谱系：一次事务内扣减母样、创建子样、记录损耗与事件链。
 - 借用归还：保存借用数量、到期时间、部分归还和最终归还状态。
 - 实验消耗：使用幂等键登记消耗，防止重复请求二次扣减。
+- 消耗账本：预约冻结可用量，开机后按实际消耗一次结算（未用自动退回）；取消实验释放预约；录错数量只能以反向分录加新分录更正，历史永不覆盖；样品隔离或销毁时未确认预约按明确规则失效。所有库存变化按实验编号和样品事件双向对账。
 - 位置脱敏：普通权限只能看到受限位置的替代码，授权人员可查看精确位置。
 - 双人审批：高风险操作要求申请人与审批人分离，并累计不同审批人的决定。
 - 异常追踪：异常可以关联样品或接收批次，保存严重度和处理状态。
@@ -61,3 +62,17 @@ python -m compileall -q app tests
 ```bash
 python -m app.cli smoke
 ```
+
+## 消耗账本接口
+
+| 步骤 | 接口 |
+| --- | --- |
+| 预约（冻结） | `POST /api/samples/{sample_id}/consumption-reservations` |
+| 确认结算（实际消耗+未用退回） | `POST /api/samples/consumption-reservations/{id}/confirm` |
+| 释放（取消实验） | `POST /api/samples/consumption-reservations/{id}/release` |
+| 更正（红冲+新分录） | `POST /api/samples/consumption-reservations/{id}/corrections` |
+| 隔离样品（未确认预约自动失效） | `POST /api/samples/{sample_id}/quarantine` |
+| 按样品/实验对账 | `GET /api/samples/consumption-ledger?sample_id=&experiment_code=` |
+| 按实验查预约 | `GET /api/samples/experiments/{experiment_code}/consumption-reservations` |
+
+确认时实际消耗为 0 表示全部退回；更正只允许作用于已确认预约，且更正后库存必须仍能容纳其他未确认预约。各写接口支持幂等键，重放返回首次业务结果。

@@ -10,6 +10,7 @@ from app.core.clock import Clock, SystemClock, to_storage
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.security import Principal
 from app.samples.repository import ApprovalRepository, LocationRepository, SampleRepository
+from app.samples.ledger import INVALIDATION_ON_STATE, ConsumptionLedgerService
 from app.services.audit import AuditService
 
 
@@ -141,6 +142,11 @@ class DestructionService:
         if existing:
             return {"record": dict(existing), "sample": self.samples.get(approval["resource_id"]), "replayed": True}
         sample = self.samples.get(approval["resource_id"])
+        # 销毁规则：样品销毁时所有未确认预约立即失效并解冻，释放出来的数量可一并销毁。
+        ConsumptionLedgerService(self.connection, self.clock).invalidate_open_reservations(
+            principal, sample["id"], INVALIDATION_ON_STATE["destroyed"]
+        )
+        sample = self.samples.get(sample["id"])
         quantity = float(approval["payload"].get("quantity", sample["quantity"]))
         if quantity <= 0 or quantity > sample["quantity"] - sample["reserved_quantity"]:
             raise ConflictError("审批数量超过当前可销毁数量")

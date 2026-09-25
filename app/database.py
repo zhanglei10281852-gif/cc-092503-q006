@@ -335,6 +335,58 @@ CREATE TABLE IF NOT EXISTS sample_events (
     occurred_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sample_events_sample ON sample_events(sample_id, id);
+
+CREATE TABLE IF NOT EXISTS consumption_reservations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reservation_code TEXT NOT NULL UNIQUE,
+    sample_id INTEGER NOT NULL REFERENCES samples(id),
+    experiment_code TEXT NOT NULL,
+    reserved_quantity REAL NOT NULL CHECK(reserved_quantity > 0),
+    consumed_quantity REAL NOT NULL DEFAULT 0 CHECK(consumed_quantity >= 0),
+    state TEXT NOT NULL CHECK(state IN ('reserved','confirmed','released','invalidated')),
+    operator_user_id INTEGER NOT NULL REFERENCES users(id),
+    idempotency_key TEXT NOT NULL,
+    reserved_at TEXT NOT NULL,
+    settled_at TEXT,
+    expires_at TEXT,
+    invalidated_reason TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK(consumed_quantity <= reserved_quantity),
+    UNIQUE(sample_id, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_reservations_sample ON consumption_reservations(sample_id, state);
+CREATE INDEX IF NOT EXISTS idx_reservations_experiment ON consumption_reservations(experiment_code);
+
+CREATE TABLE IF NOT EXISTS consumption_ledger_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sample_id INTEGER NOT NULL REFERENCES samples(id),
+    reservation_id INTEGER REFERENCES consumption_reservations(id),
+    experiment_code TEXT NOT NULL,
+    entry_type TEXT NOT NULL CHECK(entry_type IN (
+        'reserve','consume','release','invalidate','consume_reversal'
+    )),
+    operation TEXT NOT NULL CHECK(operation IN (
+        'reserve','confirm','release','correct','invalidate','direct'
+    )),
+    quantity REAL NOT NULL CHECK(quantity >= 0),
+    on_hand_delta REAL NOT NULL,
+    frozen_delta REAL NOT NULL,
+    reversal_of_id INTEGER REFERENCES consumption_ledger_entries(id),
+    correction_group_id INTEGER,
+    actor_user_id INTEGER NOT NULL REFERENCES users(id),
+    idempotency_key TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    occurred_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_idempotency ON consumption_ledger_entries(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_ledger_sample ON consumption_ledger_entries(sample_id, id);
+CREATE INDEX IF NOT EXISTS idx_ledger_reservation ON consumption_ledger_entries(reservation_id, id);
+CREATE INDEX IF NOT EXISTS idx_ledger_experiment ON consumption_ledger_entries(experiment_code);
+CREATE INDEX IF NOT EXISTS idx_ledger_correction ON consumption_ledger_entries(correction_group_id);
 """
 
 PERMISSIONS = [

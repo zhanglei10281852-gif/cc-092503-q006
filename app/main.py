@@ -10,6 +10,7 @@ from app.core.errors import DomainError
 from app.database import close_connection, init_db
 from app.samples.router import router as samples_router
 from app.samples.extended_router import router as sample_operations_router
+from app.samples.ledger_router import router as consumption_ledger_router
 
 
 @asynccontextmanager
@@ -37,6 +38,7 @@ app.include_router(users.router)
 app.include_router(roles.router)
 app.include_router(audit.router)
 app.include_router(system.router)
+app.include_router(consumption_ledger_router)
 app.include_router(samples_router)
 app.include_router(sample_operations_router)
 
